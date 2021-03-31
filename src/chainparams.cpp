@@ -19,6 +19,15 @@
 
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/algorithm/string/split.hpp>
+
+static const std::string ANTI_REPLAY_COMMITMENT =
+    "Bitcoin Core: Satoshi's True Vision";
+
+static std::vector<uint8_t> GetAntiReplayCommitment() {
+    return std::vector<uint8_t>(std::begin(ANTI_REPLAY_COMMITMENT),
+                                std::end(ANTI_REPLAY_COMMITMENT));
+}
+
 static CScript StrHexToScriptWithDefault(std::string strScript, const CScript defaultScript)
 {
     CScript returnScript;
@@ -92,11 +101,14 @@ public:
     CMainParams() {
         strNetworkID = "main";
         consensus.nSubsidyHalvingInterval = 210000;
+        consensus.nSubsidyHalvingIntervalOneMinute = 210000 * 10;
         consensus.BIP16Exception = uint256S("0x00000000000002dc756eebf4f49723ed8d30cc28a5f108eb94b1ba88ac4f9c22");
         consensus.BIP34Height = 227931;
         consensus.BIP34Hash = uint256S("0x000000000000024b89b42a942fe0d9fea3bb44ab7bd1b19115dd6a759c0808b8");
         consensus.BIP65Height = 388381; // 000000000000000004c2b624ed5d7756c508d90fd0da2c7c679febfa6c4735f0
         consensus.BIP66Height = 363725; // 00000000000000000379eaa19dce8c9b722d46ae6a57c2f1a988119488b50931
+        consensus.antiReplayOpReturnSunsetHeight = 530000;
+        consensus.antiReplayOpReturnCommitment = GetAntiReplayCommitment();
         consensus.powLimit = uint256S("00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
         consensus.nPowTargetSpacing = 10 * 60;
@@ -124,6 +136,42 @@ public:
         // By default assume that the signatures in ancestors of this block are valid.
         consensus.defaultAssumeValid = uint256S("0x0000000000000000000f1c54590ee18d15ec70e68c8cd4cfbadb1b4f11697eee"); //563378
 
+        // Aug, 1 2017 hard fork
+        consensus.uahfHeight = 478559;
+
+        // May, 21st hard fork. Human time (GMT): Monday, May 21, 2018 04:00:00 PM
+        // Actual fork was 5 hours later
+        consensus.coreHardForkActivationTime = 1526852960;
+
+        // Reject PROTOCOL_VERSION 80030 Time
+        // Human time (GMT): Sunday, June 2, 2019 11:00:00 PM. Enforce PROTOCOL_VERSION=80050
+        consensus.enforceProtocolVersion80050Time = 1559516400;
+
+        // At this height we will hardfork to 1-minute blocks and 30-period DAA
+        consensus.oneMinuteBlockHeight = 588672;
+
+        // At this height we will hardfork to Blake2b PoW algo on mainnet
+        // June 3rd - June 17th depending on 3000 blocks per week trailing run rate or 10080
+        // blocks expected based on 1-min target.
+        consensus.powBlake2Height = 836751;
+
+        // At this height we will no longer have special handling of 0x21 verion blocks in
+        // CBlockHeader
+        consensus.plug0x21ExploitHeight = 915000;
+
+        // Take the amount of 10-minute blocks in this interval and add it
+        // to the number of expected 1-minute blocks left in the orginal planned
+        // interval to figure out when to cut the block subsidy. It should be more 
+        // straight forward on subsequent halvings.
+        // ie. (((588672 -(210000*2))+(((210000*3)-588672)*10)))=168672+(41328*10)
+        // ie. (((586656 -(210000*2))+(((210000*3)-586656)*10)))=166656+(43344*10)
+        // so this interval would be 581952 blocks past last halving
+        // which means 12.5 / 10 / 2 block rewards at a height of 210000 * 2 + 581952
+        // or halve to 0.625 TNET at height 1,001,952
+        consensus.nSubsidyHalvingIntervalOneMinuteAdjustment =
+            (((consensus.oneMinuteBlockHeight - (210000 * 2)) + 
+            (((210000 * 3) - consensus.oneMinuteBlockHeight) * 10)));
+
         consensus.genesis_subsidy = 50*COIN;
         consensus.connect_genesis_outputs = false;
         consensus.subsidy_asset = CAsset();
@@ -142,11 +190,11 @@ public:
          * The characters are rarely used upper ASCII, not valid as UTF-8, and produce
          * a large 32-bit integer with any alignment.
          */
-        pchMessageStart[0] = 0xf9;
-        pchMessageStart[1] = 0xbe;
-        pchMessageStart[2] = 0xb4;
-        pchMessageStart[3] = 0xd9;
-        nDefaultPort = 8333;
+        pchMessageStart[0] = 0x12;
+        pchMessageStart[1] = 0xb2;
+        pchMessageStart[2] = 0xdc;
+        pchMessageStart[3] = 0xf0;
+        nDefaultPort = 10333;
         nPruneAfterHeight = 100000;
         m_assumed_blockchain_size = 240;
         m_assumed_chain_state_size = 3;
@@ -161,14 +209,10 @@ public:
         // This is fine at runtime as we'll fall back to using them as a oneshot if they don't support the
         // service bits we want, but we should get them updated to support all service bits wanted by any
         // release ASAP to avoid it where possible.
-        vSeeds.emplace_back("seed.bitcoin.sipa.be"); // Pieter Wuille, only supports x1, x5, x9, and xd
-        vSeeds.emplace_back("dnsseed.bluematt.me"); // Matt Corallo, only supports x9
-        vSeeds.emplace_back("dnsseed.bitcoin.dashjr.org"); // Luke Dashjr
-        vSeeds.emplace_back("seed.bitcoinstats.com"); // Christian Decker, supports x1 - xf
-        vSeeds.emplace_back("seed.bitcoin.jonasschnelli.ch"); // Jonas Schnelli, only supports x1, x5, x9, and xd
-        vSeeds.emplace_back("seed.btc.petertodd.org"); // Peter Todd, only supports x1, x5, x9, and xd
-        vSeeds.emplace_back("seed.bitcoin.sprovoost.nl"); // Sjors Provoost
-        vSeeds.emplace_back("dnsseed.emzy.de"); // Stephan Oeste
+        vSeeds.emplace_back("seeder.clashic.services"); // clashic.services maintained by Kimax (Wattup.eu)
+        vSeeds.emplace_back("seeder.clashic.cash"); // clashic.cash maintained by Clashicly
+        vSeeds.emplace_back("seeder.bitcoincore.zone"); // bitcoincore.zone
+        vSeeds.emplace_back("seeder-mainnet.clashic.org"); // truevisionofsatoshi.com
 
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,0);
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,5);
@@ -187,27 +231,38 @@ public:
 
         checkpointData = {
             {
-                { 11111, uint256S("0x0000000069e244f73d78e8fd29ba2fd2ed618bd6fa2ee92559f542fdb26e7c1d")},
-                { 33333, uint256S("0x000000002dd5588a74784eaa7ab0507a18ad16a236e7b1ce69f00d7ddfb5d0a6")},
-                { 74000, uint256S("0x0000000000573993a3c9e41ce34471c079dcf5f52a0e824a81e7f953b8661a20")},
-                {105000, uint256S("0x00000000000291ce28027faea320c8d2b054b2e0fe44a773f3eefb151d6bdc97")},
-                {134444, uint256S("0x00000000000005b12ffd4cd315cd34ffd4a594f430ac814c91184a0d42d2b0fe")},
-                {168000, uint256S("0x000000000000099e61ea72015e79632f216fe6cb33d7899acb35b75c8303b763")},
-                {193000, uint256S("0x000000000000059f452a5f7340de6682a977387c17010ff6e6c3bd83ca8b1317")},
-                {210000, uint256S("0x000000000000048b95347e83192f69cf0366076336c639f9b7228e9ba171342e")},
-                {216116, uint256S("0x00000000000001b4f4b433e81ee46494af945cf96014816a4e2370f11b23df4e")},
-                {225430, uint256S("0x00000000000001c108384350f74090433e7fcf79a606b8e797f065b130575932")},
-                {250000, uint256S("0x000000000000003887df1f29024b06fc2200b55f8af8f35453d7be294df2d214")},
-                {279000, uint256S("0x0000000000000001ae8c72a0b0c301f67e3afca10e819efa9041e458e9bd7e40")},
-                {295000, uint256S("0x00000000000000004d9b4ef50f0f9d686fd69db2e03af35a100370c64632a983")},
+                {  11111, uint256S("0x0000000069e244f73d78e8fd29ba2fd2ed618bd6fa2ee92559f542fdb26e7c1d")},
+                {  33333, uint256S("0x000000002dd5588a74784eaa7ab0507a18ad16a236e7b1ce69f00d7ddfb5d0a6")},
+                {  74000, uint256S("0x0000000000573993a3c9e41ce34471c079dcf5f52a0e824a81e7f953b8661a20")},
+                { 105000, uint256S("0x00000000000291ce28027faea320c8d2b054b2e0fe44a773f3eefb151d6bdc97")},
+                { 134444, uint256S("0x00000000000005b12ffd4cd315cd34ffd4a594f430ac814c91184a0d42d2b0fe")},
+                { 168000, uint256S("0x000000000000099e61ea72015e79632f216fe6cb33d7899acb35b75c8303b763")},
+                { 193000, uint256S("0x000000000000059f452a5f7340de6682a977387c17010ff6e6c3bd83ca8b1317")},
+                { 210000, uint256S("0x000000000000048b95347e83192f69cf0366076336c639f9b7228e9ba171342e")},
+                { 216116, uint256S("0x00000000000001b4f4b433e81ee46494af945cf96014816a4e2370f11b23df4e")},
+                { 225430, uint256S("0x00000000000001c108384350f74090433e7fcf79a606b8e797f065b130575932")},
+                { 250000, uint256S("0x000000000000003887df1f29024b06fc2200b55f8af8f35453d7be294df2d214")},
+                { 279000, uint256S("0x0000000000000001ae8c72a0b0c301f67e3afca10e819efa9041e458e9bd7e40")},
+                { 295000, uint256S("0x00000000000000004d9b4ef50f0f9d686fd69db2e03af35a100370c64632a983")},
+                // UAHF fork block
+                { 478559, uint256S("0x000000000000000000651ef99cb9fcbe0dadde1d424bd9f15ff20136191a5eec")},
+                { 490000, uint256S("0x0000000000000000018ade0e75b4c21db72f05db1e4fffb870c26d6c765dc6d1")},
+                { 575000, uint256S("0x000000000000000e507218030ced7824e0a6b84e6d243bc76d6590930fc88c82")},
+                { 576720, uint256S("0x00000000000000017de31d8e9a74ba7c50557d13e10290131dfa78202799faea")},
+                { 585550, uint256S("0x0000000000000004fb959c2bbabb38609bbe44fa4bb206b1a81849f9b10414cd")},
+                { 615385, uint256S("0x000000000000000f61a5f419643ce6c15a579f49289d6fd1b1ed521f899d44ee")},
+                { 734750, uint256S("0x000000000000000eea84db6a33adefff7cdb4ee87ec961a8640b0de8b0df363d")},
+                { 819300, uint256S("0x00000000000000921ef5597db254728192397d6a40eaf5b502da4a4538bedb5a")},
+                { 837750, uint256S("0x025c87c8ec7275cee0b493defa46337de840c84848f85b7555b0987936104127")},
+                {1767378, uint256S("0x5389597b0efeb0eb97edef335c6db6c8f0f75c1275b8f95805a61eb5f7e5e155")}
             }
         };
 
         chainTxData = ChainTxData{
             // Data from rpc: getchaintxstats 4096 0000000000000000000f1c54590ee18d15ec70e68c8cd4cfbadb1b4f11697eee
-            /* nTime    */ 1550374134,
-            /* nTxCount */ 383732546,
-            /* dTxRate  */ 3.685496590998308
+            /* nTime    */ 1617137851,
+            /* nTxCount */ 246931292,
+            /* dTxRate  */ 0.0167
         };
 
         /* disable fallback fee on mainnet */
